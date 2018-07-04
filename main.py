@@ -7,6 +7,7 @@ from matplotlib import pyplot as plt
 import tushare as ts
 from read import read
 import process
+import headless
 
 # In[0]: 输入
 df = read()
@@ -33,7 +34,10 @@ hs300
 # In[4]: 计算合约数
 def transaction(df, future, summary, code, multiplier):
     _id = summary[summary.index.str.startswith(code)]['volXpos'].idxmax()
-    buy = summary.loc[_id]['close'] * multiplier
+    current_price = process.read_realtime_data(code).loc[_id, 'lastprice']
+    if not current_price:
+        current_price = summary.loc[_id, 'close']
+    buy = current_price * multiplier
     total = df[df.index.isin(future.index)]['value'].sum()
     return _id, total, buy, total / buy
 
