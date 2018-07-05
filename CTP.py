@@ -4,87 +4,67 @@ import sys
 
 from ctpwrapper import ApiStructure
 from ctpwrapper import MdApiPy
+from ctpwrapper import TraderApiPy
+from trader import Trader, Trader_FUTURES
+from md import Md, Md_PRICE
+
 import time
 import CONST
-
-class Md(MdApiPy):
-    """
-    """
-
-    def __init__(self, broker_id, investor_id, password, request_id=1):
-
-        self.broker_id = broker_id
-        self.investor_id = investor_id
-        self.password = password
-        self.request_id = request_id
-
-    def OnRspError(self, pRspInfo, nRequestID, bIsLast):
-
-        self.ErrorRspInfo(pRspInfo, nRequestID)
-
-    def ErrorRspInfo(self, info, request_id):
-        """
-        :param info:
-        :return:
-        """
-        if info.ErrorID != 0:
-            print('request_id=%s ErrorID=%d, ErrorMsg=%s',
-                  request_id, info.ErrorID, info.ErrorMsg.decode('gbk'))
-        return info.ErrorID != 0
-
-    def OnFrontConnected(self):
-        """
-        :return:
-        """
-
-        user_login = ApiStructure.ReqUserLoginField(BrokerID=self.broker_id,
-                                                    UserID=self.investor_id,
-                                                    Password=self.password)
-        self.ReqUserLogin(user_login, self.request_id)
-
-    def OnFrontDisconnected(self, nReason):
-
-        print("Md OnFrontDisconnected %s", nReason)
-        sys.exit()
-
-    def OnHeartBeatWarning(self, nTimeLapse):
-        """心跳超时警告。当长时间未收到报文时，该方法被调用。
-        @param nTimeLapse 距离上次接收报文的时间
-        """
-        print('Md OnHeartBeatWarning, time = %s', nTimeLapse)
-
-    def OnRspUserLogin(self, pRspUserLogin, pRspInfo, nRequestID, bIsLast):
-        """
-        用户登录应答
-        :param pRspUserLogin:
-        :param pRspInfo:
-        :param nRequestID:
-        :param bIsLast:
-        :return:
-        """
-        if pRspInfo.ErrorID != 0:
-            print("Md OnRspUserLogin failed error_id=%s msg:%s",
-                  pRspInfo.ErrorID, pRspInfo.ErrorMsg.decode('gbk'))
-        else:
-            print("Md user login successfully")
-            # print(pRspUserLogin)
-            day = self.GetTradingDay()
-            print(day)
-            md.Join()
-    def OnRspSubMarketData(self, pSpecificInstrument, pRspInfo, nRequestID, blsLast):
-        pass
-    def OnRtnDepthMarketData(self, pDepthMarketData):
-        PRICE[pDepthMarketData.InstrumentID.upper()] = pDepthMarketData.LastPrice
+import asyncio
 
 md = Md(CONST.BORDKER_ID, CONST.INVESTOR_ID, CONST.PASSWORD)
+trader = Trader(CONST.BORDKER_ID, CONST.INVESTOR_ID, CONST.PASSWORD)
 md.Create()
-md.RegisterFront(CONST.SERVER)
+md.RegisterFront(CONST.MD_SERVER)
 md.Init()
 
-PRICE = []
+trader = Trader(CONST.BORDKER_ID, CONST.INVESTOR_ID, CONST.PASSWORD)
+trader.Create()
+trader.RegisterFront(CONST.TD_SERVER)
+trader.SubscribePrivateTopic(2)
+trader.Init()
 
-def subscribe(code):
-    md.SubscribeMarketData([code])
+def ctp_handle(result):
+    """
+    0: 发送成功
+    -1: 因网络原因发送失败
+    -2: 未处理请求队列总数量超限。
+    -3: 每秒发送请求数量超限。
+    """
+    if result != 0:
+        print(result)
+    assert(result == 0)
 
-def get_data(code):
-    return PRICE[code]
+def sub_market_data(codes):
+    ctp_handle(md.SubscribeMarketData(codes))
+
+def get_market_data(code):
+    return Md_PRICE[code] if code in Md_PRICE else None
+
+async def wait_data_available(code):
+    def check_data():
+        for i in code:
+            if not(i in Md_PRICE):
+                return False
+        return True
+
+    while not check_data():
+        await md.wait_available_data()
+
+def create_trader_future():
+    req_id = trader.inc_request_id()
+    future = asyncio.Future()
+    Trader_FUTURES[req_id] = future
+    return req_id, asyncio.futures.wrap_future(future, loop=loop)
+
+def get_investor_position(instrument_id):
+    structure = ApiStructure.QryInvestorPositionField(
+        BrokerID=CONST.BORDKER_ID,
+        InvestorID=CONST.INVESTOR_ID,
+        InstrumentID=instrument_id
+    )
+    req_id, future = create_trader_future()
+    ctp_handle(trader.ReqQryInvestorPosition(structure, req_id))
+    return future
+
+loop=asyncio.get_event_loop()

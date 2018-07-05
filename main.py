@@ -6,55 +6,53 @@ import numpy as np
 import tushare as ts
 from read import read
 import process
+import CTP
+import time
+import asyncio
 
-# In[0]: 输入
-df = read()
-df
+async def main():
+    # In[0]: 输入
+    ori_df = read()
+    # In[1]: 沪深 300
+    result = pd.DataFrame([
+        await transaction(ori_df, ts.get_hs300s(), 'IF', 300),
+        await transaction(ori_df, ts.get_sz50s(), 'IH', 300),
+        await transaction(ori_df, ts.get_zz500s(), 'IC', 200)
+    ])
+    result.columns = ['代码', '现货总市值', '合约市值', '合约数']
+    print(result)
 
-# In[1]: 获取实时股票价格
-realtime_data = ts.get_realtime_quotes(pd.Series(df.index))
-realtime_data = realtime_data[['code', 'price']]
-realtime_data
+async def transaction(ori_df, __index, __code, __multiplier):
+    # In[1]: 获取所有期货
+    available_future = pd.Series(process.read_realtime_data(__code).index)
+    CTP.sub_market_data(available_future)
+    print('获取期货信息...')
+    await CTP.wait_data_available(available_future)
+    # In[2]: 选择买入的期货
+    future_df = pd.DataFrame(list(map(
+        lambda data: (data.InstrumentID.decode('utf-8'), data.LastPrice, data.Volume, data.OpenInterest, data.UpdateTime),
+        [CTP.get_market_data(code) for code in available_future])
+    ))
+    future_df.columns = ['code', 'lastPrice', 'volume', 'openInterest', 'updateTime']
+    future_df = future_df.set_index('code')
+    future_df['total'] = future_df['openInterest'] * future_df['volume']
+    _id = future_df['total'].idxmax()
 
-# In[2]: 合并到 DataFrame, 计算市值
-for code, price in realtime_data.values:
-    df.loc[code, 'price'] = price
-df['price'] = df['price'].astype(np.float64)
-df['value'] = df['position'] * df['price']
-df
+    future = future_df.loc[_id]
+    current_price = future['lastPrice'] * __multiplier
+    # In[3]: 获取现货信息
+    indexes = __index.set_index('code')
+    print('获取现货信息...')
+    index_df = ts.get_realtime_quotes(pd.Series(indexes.index))[['code', 'price']]
+    # In[4]: 计算市值
+    for code, price in index_df.values:
+        ori_df.loc[code, 'price'] = price
+    ori_df['price'] = ori_df['price'].astype(np.float64)
+    ori_df['value'] = ori_df['price'] * ori_df['position']
+    total = ori_df['value'].sum()
+    # In[5]: 计算合约数
+    return _id, total, current_price, total / current_price
 
-# In[3]: 获取指数
-hs300 = ts.get_hs300s().set_index('code')
-sz50 = ts.get_sz50s().set_index('code')
-zz500 = ts.get_zz500s().set_index('code')
-hs300
-
-# In[4]: 计算合约数
-def transaction(df, future, summary, code, multiplier):
-    _id = summary[summary.index.str.startswith(code)]['volXpos'].idxmax()
-    current_price = process.read_realtime_data(code).loc[_id, 'lastprice']
-    if current_price:
-        current_price = summary.loc[_id, 'close']
-    else:
-        CTP.subscribe([_id])
-        while True:
-            time.sleep(1)
-            _price = CTP.get_data(_id)
-            if _price:
-                current_price = _price
-    buy = current_price * multiplier
-    total = df[df.index.isin(future.index)]['value'].sum()
-    return _id, total, buy, total / buy, current_price
-
-summary = process.read_daily_summary()
-summary['volXpos'] = summary['position'] * summary['deal']
-result = pd.DataFrame(np.array((
-    transaction(df, sz50, summary, 'IH', 300),
-    transaction(df, zz500, summary, 'IC', 200),
-    transaction(df, hs300, summary, 'IF', 300)
-)))
-result.columns = ['代码', '现货总市值', '合约市值', '合约数', '现价格']
-result
-
-# In[5]: 储存
-result.to_csv('result.csv')
+loop = asyncio.get_event_loop()
+loop.run_until_complete(main())
+loop.close()

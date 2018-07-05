@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import os
 
+DEBUG_PROVIDE = iter([0, 1, 2, 2, 3, 4, 2, 3, 4])
 columns = ['证券代码', '证券名称', '持仓']
 
 def process_file(filename):
@@ -10,7 +11,10 @@ def process_file(filename):
     data = pd.read_excel('./data/%s' % filename)
     instruction = ("\nIn %s\n" % filename) + "".join(map(lambda d: '%d. %s\n' % d, enumerate(data.columns)))
     print(instruction)
-    cols = [int(input('In %s, select column for %s -> ' % (filename, col))) for col in columns]
+    if DEBUG_PROVIDE:
+        cols = [DEBUG_PROVIDE.__next__() for col in columns]
+    else:
+        cols = [int(input('In %s, select column for %s -> ' % (filename, col))) for col in columns]
     data = data[data.columns[cols]]
     data.columns = ['code', 'name', 'position']
     return data.dropna()
