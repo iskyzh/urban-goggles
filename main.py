@@ -3,11 +3,9 @@
 
 import pandas as pd
 import numpy as np
-from matplotlib import pyplot as plt
 import tushare as ts
 from read import read
 import process
-import headless
 
 # In[0]: 输入
 df = read()
@@ -35,11 +33,18 @@ hs300
 def transaction(df, future, summary, code, multiplier):
     _id = summary[summary.index.str.startswith(code)]['volXpos'].idxmax()
     current_price = process.read_realtime_data(code).loc[_id, 'lastprice']
-    if not current_price:
+    if current_price:
         current_price = summary.loc[_id, 'close']
+    else:
+        CTP.subscribe([_id])
+        while True:
+            time.sleep(1)
+            _price = CTP.get_data(_id)
+            if _price:
+                current_price = _price
     buy = current_price * multiplier
     total = df[df.index.isin(future.index)]['value'].sum()
-    return _id, total, buy, total / buy
+    return _id, total, buy, total / buy, current_price
 
 summary = process.read_daily_summary()
 summary['volXpos'] = summary['position'] * summary['deal']
@@ -48,7 +53,7 @@ result = pd.DataFrame(np.array((
     transaction(df, zz500, summary, 'IC', 200),
     transaction(df, hs300, summary, 'IF', 300)
 )))
-result.columns = ['代码', '合约数', '合约市值', '现货总市值']
+result.columns = ['代码', '现货总市值', '合约市值', '合约数', '现价格']
 result
 
 # In[5]: 储存

@@ -23,7 +23,8 @@ DATA_SOURCE = {
         "IC": "http://www.cffex.com.cn/quote_IC.txt",
         "IF": "http://www.cffex.com.cn/quote_IF.txt"
     },
-    "futures": "http://www.cffex.com.cn/cp/index_6719.xml"
+    "futures": "http://www.cffex.com.cn/cp/index_6719.xml",
+    "sina":"http://hq.sinajs.cn/rn=00000000&list=CFF_%s"
 }
 
 def read_futures():
@@ -64,4 +65,6 @@ def read_daily_summary():
     df = df.set_index('instrument')
     return df
 
-read_daily_summary()
+def read_sina_data(code):
+    data = req.get(DATA_SOURCE["sina"] % code).text
+    return float(data.split(',')[3])
